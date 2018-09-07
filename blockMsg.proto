@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package luckyblock;
+
+import "google/protobuf/any.proto";
+
+message BlockMessage {
+    string ID = 100;
+    string version = 105;
+    string parentID = 110;
+    uint64 blockNumber = 115;
+    int64 timestamp = 120;
+    uint32 score = 125;
+    string peerID = 130;
+    repeated google.protobuf.Any transactions = 135;
+}
