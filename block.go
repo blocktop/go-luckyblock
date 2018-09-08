@@ -1,10 +1,10 @@
 package luckyblock
 
 import (
-	"strconv"
 	"crypto/sha256"
 	"encoding/hex"
 	"math/bits"
+	"strconv"
 	"time"
 
 	spec "github.com/blckit/go-spec"
@@ -32,7 +32,7 @@ func NewBlock(parent *Block, peerID string) *Block {
 	b.peerID = peerID
 	b.timestamp = time.Now().UnixNano() / int64(time.Millisecond)
 
-	if (parent == nil) {
+	if parent == nil {
 		// genesis block
 		b.blockNumber = uint64(0)
 		b.parentID = ""
@@ -141,14 +141,14 @@ func (b *Block) Unmarshal(message proto.Message, txnHandlers map[string]spec.Tra
 			// TODO, how to handle
 			continue
 		}
-		b.transactions[i] = h.UnmarshalAny(any)
+		b.transactions[i] = h.Unmarshal(any)
 	}
 }
 
 func (b *Block) GenerateID() {
-	data := b.GetVersion() + b.GetPeerID() + b.GetParentID() + 
-		strconv.FormatUint(b.GetBlockNumber(), 10) + 
-		strconv.FormatInt(b.GetTimestamp(), 10) + 
+	data := b.GetVersion() + b.GetPeerID() + b.GetParentID() +
+		strconv.FormatUint(b.GetBlockNumber(), 10) +
+		strconv.FormatInt(b.GetTimestamp(), 10) +
 		strconv.FormatUint(uint64(b.GetScore()), 10)
 
 	for _, t := range b.transactions {

@@ -4,7 +4,7 @@ import (
 	"sync"
 
 	spec "github.com/blckit/go-spec"
-	"github.com/golang/protobuf/proto"
+	proto "github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"
 )
@@ -27,10 +27,16 @@ func (g *BlockGenerator) GetType() string {
 }
 
 func (g *BlockGenerator) Unmarshal(message proto.Message, txnHandlers map[string]spec.TransactionHandler) spec.Block {
-	msg := &BlockMessage{}
-	ptypes.UnmarshalAny(message.(*any.Any), msg)
-
+	a, ok := message.(*any.Any)
+	var msg *BlockMessage
+	if ok {
+		msg = &BlockMessage{}
+		ptypes.UnmarshalAny(a, msg)
+	} else {
+		msg = message.(*BlockMessage)
+	}	
 	block := &Block{}
+	
 	block.Unmarshal(msg, txnHandlers)
 
 	return block
