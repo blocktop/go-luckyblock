@@ -22,7 +22,7 @@ import (
 	"math/bits"
 
 
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 )
 
 var BlockComparator spec.BlockComparator = func(blocks []spec.Block) spec.Block {

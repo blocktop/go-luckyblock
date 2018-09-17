@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/viper"
 	"sync"
 
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 	proto "github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
 	"github.com/golang/protobuf/ptypes/any"

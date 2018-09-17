@@ -17,7 +17,7 @@
 package luckyblock
 
 import (
-	spec "github.com/blckit/go-spec"
+	spec "github.com/blocktop/go-spec"
 	proto "github.com/golang/protobuf/proto"
 )
 
