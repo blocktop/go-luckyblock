@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/spf13/viper"
+
 	spec "github.com/blckit/go-spec"
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
@@ -14,23 +16,27 @@ import (
 )
 
 const (
-	BlockType    = "luckyblock"
-	BlockVersion = "v1"
+	MaxScore = uint64(^uint32(0))
 )
 
 type Block struct {
 	id, parentID string
 	blockNumber  uint64
 	score        uint32
+	scored       bool
 	transactions []spec.Transaction
 	timestamp    int64
 	peerID       string
+	blockType    string
+	blockVersion string
 }
 
 func NewBlock(parent *Block, peerID string) *Block {
 	b := &Block{}
 	b.peerID = peerID
 	b.timestamp = time.Now().UnixNano() / int64(time.Millisecond)
+	b.blockType = viper.GetString("blockchain.block.type")
+	b.blockVersion = viper.GetString("blockchain.block.version")
 
 	if parent == nil {
 		// genesis block
@@ -47,11 +53,11 @@ func NewBlock(parent *Block, peerID string) *Block {
 }
 
 func (b *Block) GetType() string {
-	return BlockType
+	return b.blockType
 }
 
 func (b *Block) GetVersion() string {
-	return BlockVersion
+	return b.blockVersion
 }
 
 func (b *Block) GetID() string {
@@ -83,14 +89,45 @@ func (b *Block) GetPeerID() string {
 }
 
 func (b *Block) GetScore() uint32 {
-	if b.score == 0 {
-		hash := sha256.Sum256([]byte(b.peerID + b.parentID))
-		b.score = 0
-		for _, byt := range hash {
-			b.score += uint32(bits.OnesCount8(byt))
+	if !b.scored {
+		score := uint64(1)
+		reps := 4
+		for reps > 0 {
+			hash := sha256.Sum256([]byte(b.peerID + b.parentID + strconv.FormatUint(score, 16)))
+			count := uint64(onesCount256(hash))
+			if count == 0 {
+				count++
+			}
+			score *= uint64(count)
+			reps--
 		}
+
+		// score > MaxScore would happen if each rep yielded 256,
+		// in other words if each hash rep had all 1 bits and no 0s. Thus
+		// (256 * 256 * 256 * 256) == (2**8 * 2**8 * 2**8 * 2**8) == 2**32
+		// which would be 1 greater than the max value of uint32. Hence
+		// the check below, and the reason the scoring loop uses uint64
+		// instead of uint32. This is a HIGHLY unlikely scenario. The
+		// possiblity is so remote it's almost not worth the nanoseconds
+		// to make this check. But just to be pedantic...
+		if score > MaxScore {
+			score = 0
+		}
+		// And the equally unlikely scenario of all hash reps yielding
+		// all 0 bits would result in a score of 1 by the logic above.
+
+		b.score = uint32(score)
+		b.scored = true
 	}
 	return b.score
+}
+
+func onesCount256(value [32]byte) int {
+	count := 0
+	for _, byt := range value {
+		count += bits.OnesCount8(byt)
+	}
+	return count
 }
 
 func (b *Block) Marshal() proto.Message {

@@ -1,6 +1,7 @@
 package luckyblock
 
 import (
+	"github.com/spf13/viper"
 	"sync"
 
 	spec "github.com/blckit/go-spec"
@@ -13,17 +14,19 @@ type BlockGenerator struct {
 	sync.Mutex
 	outstandingTxns map[string]spec.Transaction
 	peerID          string
+	blockType				string
 }
 
 func NewBlockGenerator(peerID string) *BlockGenerator {
 	g := &BlockGenerator{}
+	g.blockType = viper.GetString("blockchain.block.type")
 	g.outstandingTxns = make(map[string]spec.Transaction, 0)
 	g.peerID = peerID
 	return g
 }
 
 func (g *BlockGenerator) GetType() string {
-	return BlockType
+	return g.blockType
 }
 
 func (g *BlockGenerator) Unmarshal(message proto.Message, txnHandlers map[string]spec.TransactionHandler) spec.Block {
