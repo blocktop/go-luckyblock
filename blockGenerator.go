@@ -75,7 +75,7 @@ func (g *BlockGenerator) UnlogTransactions(txns []spec.Transaction) {
 	g.Unlock()
 }
 
-func (g *BlockGenerator) ProduceGenesisBlock() spec.Block {
+func (g *BlockGenerator) GenerateGenesisBlock() spec.Block {
 	block := NewBlock(nil, g.peerID)
 	block.GenerateID()
 	return block
