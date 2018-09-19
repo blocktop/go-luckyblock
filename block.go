@@ -171,7 +171,7 @@ func (b *Block) Marshal() proto.Message {
 	return msg
 }
 
-func (b *Block) Unmarshal(message proto.Message, txnHandlers map[string]spec.TransactionHandler) {
+func (b *Block) Unmarshal(message proto.Message, txns []spec.Transaction) {
 	msg := message.(*BlockMessage)
 
 	b.id = msg.GetID()
@@ -180,22 +180,7 @@ func (b *Block) Unmarshal(message proto.Message, txnHandlers map[string]spec.Tra
 	b.timestamp = msg.GetTimestamp()
 	b.peerID = msg.GetPeerID()
 	b.score = msg.GetScore()
-
-	txnMsgs := msg.GetTransactions()
-	b.transactions = make([]spec.Transaction, len(txnMsgs))
-	for i, any := range txnMsgs {
-		txnType, err := ptypes.AnyMessageName(any)
-		if err != nil {
-			//TODO
-			continue
-		}
-		h := txnHandlers[txnType]
-		if h == nil {
-			// TODO, how to handle
-			continue
-		}
-		b.transactions[i] = h.Unmarshal(any)
-	}
+	b.transactions = txns
 }
 
 func (b *Block) GenerateID() {

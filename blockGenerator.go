@@ -17,8 +17,10 @@
 package luckyblock
 
 import (
-	"github.com/spf13/viper"
 	"sync"
+
+	"github.com/golang/glog"
+	"github.com/spf13/viper"
 
 	spec "github.com/blocktop/go-spec"
 	proto "github.com/golang/protobuf/proto"
@@ -30,49 +32,33 @@ type BlockGenerator struct {
 	sync.Mutex
 	outstandingTxns map[string]spec.Transaction
 	peerID          string
-	blockType				string
+	logPeerID       string
+	blockType       string
+	txnHandlers     map[string]spec.TransactionHandler
 }
 
-func NewBlockGenerator(peerID string) *BlockGenerator {
+func NewBlockGenerator(peerID string, txnHandlers ...spec.TransactionHandler) *BlockGenerator {
 	g := &BlockGenerator{}
 	g.blockType = viper.GetString("blockchain.block.type")
 	g.outstandingTxns = make(map[string]spec.Transaction, 0)
 	g.peerID = peerID
+
+	if peerID[:2] == "Qm" {
+		g.logPeerID = peerID[2:8]
+	} else {
+		g.logPeerID = peerID[:6]
+	}
+
+	g.txnHandlers = make(map[string]spec.TransactionHandler, len(txnHandlers))
+	for _, h := range txnHandlers {
+		g.txnHandlers[h.GetType()] = h
+	}
+
 	return g
 }
 
 func (g *BlockGenerator) GetType() string {
 	return g.blockType
-}
-
-func (g *BlockGenerator) Unmarshal(message proto.Message, txnHandlers map[string]spec.TransactionHandler) spec.Block {
-	a, ok := message.(*any.Any)
-	var msg *BlockMessage
-	if ok {
-		msg = &BlockMessage{}
-		ptypes.UnmarshalAny(a, msg)
-	} else {
-		msg = message.(*BlockMessage)
-	}	
-	block := &Block{}
-	
-	block.Unmarshal(msg, txnHandlers)
-
-	return block
-}
-
-func (g *BlockGenerator) LogTransaction(txn spec.Transaction) {
-	g.Lock()
-	g.outstandingTxns[txn.GetID()] = txn
-	g.Unlock()
-}
-
-func (g *BlockGenerator) UnlogTransactions(txns []spec.Transaction) {
-	g.Lock()
-	for _, t := range txns {
-		delete(g.outstandingTxns, t.GetID())
-	}
-	g.Unlock()
 }
 
 func (g *BlockGenerator) GenerateGenesisBlock() spec.Block {
@@ -107,6 +93,98 @@ func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block
 
 	return block
 
+}
+
+func (g *BlockGenerator) ReceiveTransaction(netMsg *spec.NetworkMessage) {
+	txnType := netMsg.Protocol.GetResourceType()
+	h := g.txnHandlers[txnType]
+	if h == nil {
+		glog.Warningf("Peer %s: %s received transaction of unknown type: %s", g.logPeerID, g.blockType, txnType)
+		return
+	}
+	txn := h.Unmarshal(netMsg.Message)
+	g.logTransaction(txn)
+
+}
+
+func (g *BlockGenerator) CommitBlock(block spec.Block) {
+	txns := block.GetTransactions()
+	if !g.executeTransactions(txns) {
+		// TODO fail to commit
+		// may want to unlog the problem transaction(s) here
+		return
+	}
+
+	g.unlogTransactions(txns)
+
+	glog.Warningf("Peer %s: %s confirmed block %d: %s", g.logPeerID, g.blockType, block.GetBlockNumber(), block.GetID()[:6])
+}
+
+func (g *BlockGenerator) Unmarshal(message proto.Message) spec.Block {
+	a, ok := message.(*any.Any)
+	var msg *BlockMessage
+	if ok {
+		msg = &BlockMessage{}
+		ptypes.UnmarshalAny(a, msg)
+	} else {
+		msg = message.(*BlockMessage)
+	}
+
+	txnMsgs := msg.GetTransactions()
+	txns := make([]spec.Transaction, len(txnMsgs))
+	for i, any := range txnMsgs {
+		txnType, err := ptypes.AnyMessageName(any)
+		if err != nil {
+			//TODO
+			continue
+		}
+		h := g.txnHandlers[txnType]
+		if h == nil {
+			// TODO, how to handle
+			continue
+		}
+		txns[i] = h.Unmarshal(any)
+	}
+
+	block := &Block{}
+
+	block.Unmarshal(msg, txns)
+
+	return block
+}
+
+func (g *BlockGenerator) executeTransactions(txns []spec.Transaction) bool {
+	for _, t := range txns {
+		txnType := t.GetType()
+		handler := g.txnHandlers[txnType]
+		if handler == nil {
+			// TODO: log something here
+			// if we can't confirm txn then our data will be corrupt
+			// or no one else will be able to either
+			// or could be security issue
+			return false
+		} else {
+			if !handler.Execute(t) {
+				//TODO log and fail
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func (g *BlockGenerator) logTransaction(txn spec.Transaction) {
+	g.Lock()
+	g.outstandingTxns[txn.GetID()] = txn
+	g.Unlock()
+}
+
+func (g *BlockGenerator) unlogTransactions(txns []spec.Transaction) {
+	g.Lock()
+	for _, t := range txns {
+		delete(g.outstandingTxns, t.GetID())
+	}
+	g.Unlock()
 }
 
 func containsTransaction(txns []spec.Transaction, id string) bool {
