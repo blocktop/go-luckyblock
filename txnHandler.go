@@ -25,7 +25,7 @@ type TransactionHandler struct {
 	Protocol string
 }
 
-func (h *TransactionHandler) GetType() string {
+func (h *TransactionHandler) Type() string {
 	return "exchange"
 }
 

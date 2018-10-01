@@ -19,6 +19,7 @@ package luckyblock
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math/bits"
 	"strconv"
 	"time"
@@ -27,8 +28,6 @@ import (
 
 	spec "github.com/blocktop/go-spec"
 	"github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
-	"github.com/golang/protobuf/ptypes/any"
 )
 
 const (
@@ -40,18 +39,23 @@ type Block struct {
 	blockNumber  uint64
 	score        uint32
 	scored       bool
-	transactions []spec.Transaction
+	txns         []spec.Transaction
+	txnHashes    []string
 	timestamp    int64
 	peerID       string
-	blockType    string
+	name         string
+	namespace    string
 	blockVersion string
 }
+
+var _ spec.Block = (*Block)(nil)
 
 func NewBlock(parent *Block, peerID string) *Block {
 	b := &Block{}
 	b.peerID = peerID
 	b.timestamp = time.Now().UnixNano() / int64(time.Millisecond)
-	b.blockType = viper.GetString("blockchain.block.type")
+	b.name = viper.GetString("blockchain.block.name")
+	b.namespace = viper.GetString("blockchain.block.namespace")
 	b.blockVersion = viper.GetString("blockchain.block.version")
 
 	if parent == nil {
@@ -59,32 +63,48 @@ func NewBlock(parent *Block, peerID string) *Block {
 		b.blockNumber = uint64(0)
 		b.parentID = ""
 	} else {
-		b.blockNumber = parent.GetBlockNumber() + uint64(1)
-		b.parentID = parent.GetID()
+		b.blockNumber = parent.BlockNumber() + uint64(1)
+		b.parentID = parent.Hash()
 	}
-
-	b.transactions = make([]spec.Transaction, 0)
 
 	return b
 }
 
-func (b *Block) GetType() string {
-	return b.blockType
+func (b *Block) Namespace() string {
+	return b.namespace
 }
 
-func (b *Block) GetVersion() string {
+func (b *Block) Name() string {
+	return b.name
+}
+
+func (b *Block) Version() string {
 	return b.blockVersion
 }
 
-func (b *Block) GetID() string {
+func (b *Block) Hash() string {
+	if b.id == "" {
+		data, links, err := b.Marshal()
+		h := sha256.New()
+		_, err = h.Write(data)
+		if err != nil {
+			return ""
+		}
+
+		for _, linkHash := range links {
+			h.Write([]byte(linkHash))
+		}
+
+		b.id = hex.EncodeToString(h.Sum(nil))
+	}
 	return b.id
 }
 
-func (b *Block) GetParentID() string {
+func (b *Block) ParentHash() string {
 	return b.parentID
 }
 
-func (b *Block) GetBlockNumber() uint64 {
+func (b *Block) BlockNumber() uint64 {
 	return b.blockNumber
 }
 
@@ -92,15 +112,19 @@ func (b *Block) Validate() bool {
 	return true
 }
 
-func (b *Block) GetTransactions() []spec.Transaction {
-	return b.transactions
+func (b *Block) Transactions() []spec.Transaction {
+	if b.txns == nil {
+		//TODO build txns from hashes
+		b.txns = make([]spec.Transaction, 0)
+	}
+	return b.txns
 }
 
-func (b *Block) GetTimestamp() int64 {
+func (b *Block) Timestamp() int64 {
 	return b.timestamp
 }
 
-func (b *Block) GetPeerID() string {
+func (b *Block) PeerID() string {
 	return b.peerID
 }
 
@@ -146,54 +170,60 @@ func onesCount256(value [32]byte) int {
 	return count
 }
 
-func (b *Block) Marshal() proto.Message {
+func (b *Block) Marshal() ([]byte, spec.Links, error) {
 	msg := &BlockMessage{
-		Version:     b.GetVersion(),
-		ID:          b.GetID(),
-		ParentID:    b.GetParentID(),
-		BlockNumber: b.GetBlockNumber(),
-		Timestamp:   b.GetTimestamp(),
-		PeerID:      b.GetPeerID(),
+		Name:        b.Name(),
+		Namespace:   b.Namespace(),
+		Version:     b.Version(),
+		BlockNumber: b.BlockNumber(),
+		Timestamp:   b.Timestamp(),
+		PeerID:      b.PeerID(),
 		Score:       b.GetScore()}
 
-	msg.Transactions = make([]*any.Any, len(b.GetTransactions()))
-	for i, t := range b.GetTransactions() {
-		tMsg := t.Marshal()
-		a, err := ptypes.MarshalAny(tMsg)
-		if err != nil {
-			//TOD
-			return nil
-		}
+	links := make(map[string]string)
+	links["parent"] = b.ParentHash()
 
-		msg.Transactions[i] = a
+	for i, t := range b.Transactions() {
+		key := fmt.Sprintf("txn-%d", i+1)
+		links[key] = t.Hash()
 	}
 
-	return msg
+	msg.Links = links
+
+	byts, err := proto.Marshal(msg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return byts, links, nil
 }
 
-func (b *Block) Unmarshal(message proto.Message, txns []spec.Transaction) {
-	msg := message.(*BlockMessage)
+func (b *Block) Unmarshal(data []byte, links spec.Links) error {
+	msg := &BlockMessage{}
+	err := proto.Unmarshal(data, msg)
+	if err != nil {
+		return err
+	}
 
-	b.id = msg.GetID()
-	b.parentID = msg.GetParentID()
+	b.name = msg.GetName()
+	b.namespace = msg.GetNamespace()
+	b.blockVersion = msg.GetVersion()
 	b.blockNumber = msg.GetBlockNumber()
 	b.timestamp = msg.GetTimestamp()
 	b.peerID = msg.GetPeerID()
 	b.score = msg.GetScore()
-	b.transactions = txns
-}
+	b.scored = true
 
-func (b *Block) GenerateID() {
-	data := b.GetVersion() + b.GetPeerID() + b.GetParentID() +
-		strconv.FormatUint(b.GetBlockNumber(), 10) +
-		strconv.FormatInt(b.GetTimestamp(), 10) +
-		strconv.FormatUint(uint64(b.GetScore()), 10)
-
-	for _, t := range b.transactions {
-		data += t.GetID()
+	b.parentID = links["parent"]
+	b.txns = nil
+	b.txnHashes = make([]string, len(links)-1)
+	i := 0
+	for k, tx := range links {
+		if k != "parent" {
+			b.txnHashes[i] = tx
+			i++
+		}
 	}
 
-	hash := sha256.New()
-	hash.Write([]byte(data))
-	b.id = hex.EncodeToString(hash.Sum(nil))
+	return nil
 }

@@ -17,15 +17,13 @@
 package luckyblock
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/golang/glog"
 	"github.com/spf13/viper"
 
 	spec "github.com/blocktop/go-spec"
-	proto "github.com/golang/protobuf/proto"
-	"github.com/golang/protobuf/ptypes"
-	"github.com/golang/protobuf/ptypes/any"
 )
 
 type BlockGenerator struct {
@@ -35,7 +33,10 @@ type BlockGenerator struct {
 	logPeerID       string
 	blockType       string
 	txnHandlers     map[string]spec.TransactionHandler
+	blockCommitter  *blockCommitter
 }
+
+var _ spec.BlockGenerator = (*BlockGenerator)(nil)
 
 func NewBlockGenerator(peerID string, txnHandlers ...spec.TransactionHandler) *BlockGenerator {
 	g := &BlockGenerator{}
@@ -51,19 +52,20 @@ func NewBlockGenerator(peerID string, txnHandlers ...spec.TransactionHandler) *B
 
 	g.txnHandlers = make(map[string]spec.TransactionHandler, len(txnHandlers))
 	for _, h := range txnHandlers {
-		g.txnHandlers[h.GetType()] = h
+		g.txnHandlers[h.Type()] = h
 	}
+
+	g.blockCommitter = &blockCommitter{}
 
 	return g
 }
 
-func (g *BlockGenerator) GetType() string {
+func (g *BlockGenerator) Type() string {
 	return g.blockType
 }
 
 func (g *BlockGenerator) GenerateGenesisBlock() spec.Block {
 	block := NewBlock(nil, g.peerID)
-	block.GenerateID()
 	return block
 }
 func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block) {
@@ -74,7 +76,7 @@ func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block
 
 	branchtxns := make([]spec.Transaction, 0)
 	for _, b := range branch {
-		branchtxns = append(branchtxns, b.GetTransactions()...)
+		branchtxns = append(branchtxns, b.Transactions()...)
 	}
 
 	// make list of outstanding transactions that are not already in blocks of this branch
@@ -87,75 +89,55 @@ func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block
 	}
 	g.Unlock()
 
-	block.transactions = newTxns
-
-	block.GenerateID()
+	block.txns = newTxns
 
 	return block
 
 }
 
-func (g *BlockGenerator) ReceiveTransaction(netMsg *spec.NetworkMessage) {
+func (g *BlockGenerator) ReceiveTransaction(netMsg *spec.NetworkMessage) (spec.Transaction, error) {
 	txnType := netMsg.Protocol.GetResourceType()
 	h := g.txnHandlers[txnType]
 	if h == nil {
 		glog.Warningf("Peer %s: %s received transaction of unknown type: %s", g.logPeerID, g.blockType, txnType)
-		return
+		return nil, nil
 	}
-	txn := h.Unmarshal(netMsg.Message)
+	txn, err := h.ReceiveTransaction(netMsg)
+	if err != nil {
+		return nil, err
+	}
 	g.logTransaction(txn)
 
+	return txn, nil
+}
+
+func (g *BlockGenerator) TryCommitBlock(newBlock spec.Block, branch []spec.Block) bool {
+	//_, err := g.blockCommitter.TryCommit(newBlock, branch)
+	//return err != nil
+	return true
 }
 
 func (g *BlockGenerator) CommitBlock(block spec.Block) {
-	txns := block.GetTransactions()
-	if !g.executeTransactions(txns) {
-		// TODO fail to commit
-		// may want to unlog the problem transaction(s) here
-		return
-	}
-
-	g.unlogTransactions(txns)
-
-	glog.Warningf("Peer %s: %s confirmed block %d: %s", g.logPeerID, g.blockType, block.GetBlockNumber(), block.GetID()[:6])
+	//go g.blockCommitter.Commit(block)
 }
 
-func (g *BlockGenerator) Unmarshal(message proto.Message) spec.Block {
-	a, ok := message.(*any.Any)
-	var msg *BlockMessage
-	if ok {
-		msg = &BlockMessage{}
-		ptypes.UnmarshalAny(a, msg)
-	} else {
-		msg = message.(*BlockMessage)
-	}
-
-	txnMsgs := msg.GetTransactions()
-	txns := make([]spec.Transaction, len(txnMsgs))
-	for i, any := range txnMsgs {
-		txnType, err := ptypes.AnyMessageName(any)
-		if err != nil {
-			//TODO
-			continue
-		}
-		h := g.txnHandlers[txnType]
-		if h == nil {
-			// TODO, how to handle
-			continue
-		}
-		txns[i] = h.Unmarshal(any)
-	}
-
+func (g *BlockGenerator) ReceiveBlock(netMsg *spec.NetworkMessage) (spec.Block, error) {
 	block := &Block{}
+	err := block.Unmarshal(netMsg.Data, netMsg.Links)
+	if err != nil {
+		return nil, err
+	}
 
-	block.Unmarshal(msg, txns)
+	if block.Hash() != netMsg.Hash {
+		return nil, errors.New("block data does not match message hash")
+	}
 
-	return block
+	return block, nil
 }
 
 func (g *BlockGenerator) executeTransactions(txns []spec.Transaction) bool {
 	for _, t := range txns {
-		txnType := t.GetType()
+		txnType := t.Name()
 		handler := g.txnHandlers[txnType]
 		if handler == nil {
 			// TODO: log something here
@@ -175,21 +157,21 @@ func (g *BlockGenerator) executeTransactions(txns []spec.Transaction) bool {
 
 func (g *BlockGenerator) logTransaction(txn spec.Transaction) {
 	g.Lock()
-	g.outstandingTxns[txn.GetID()] = txn
+	g.outstandingTxns[txn.Hash()] = txn
 	g.Unlock()
 }
 
 func (g *BlockGenerator) unlogTransactions(txns []spec.Transaction) {
 	g.Lock()
 	for _, t := range txns {
-		delete(g.outstandingTxns, t.GetID())
+		delete(g.outstandingTxns, t.Hash())
 	}
 	g.Unlock()
 }
 
 func containsTransaction(txns []spec.Transaction, id string) bool {
 	for _, t := range txns {
-		if t.GetID() == id {
+		if t.Hash() == id {
 			return true
 		}
 	}

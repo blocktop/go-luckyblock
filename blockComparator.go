@@ -17,10 +17,9 @@
 package luckyblock
 
 import (
-	"strconv"
 	"crypto/sha256"
 	"math/bits"
-
+	"strconv"
 
 	spec "github.com/blocktop/go-spec"
 )
@@ -68,7 +67,7 @@ var BlockComparator spec.BlockComparator = func(blocks []spec.Block) spec.Block 
 func comparator(b1, b2 spec.Block, round int) int {
 	b1Luck := b1.(*Block)
 	b2Luck := b2.(*Block)
-	
+
 	if round == 0 {
 		if b1Luck.score > b2Luck.score {
 			return 0
@@ -81,8 +80,8 @@ func comparator(b1, b2 spec.Block, round int) int {
 
 	// scores equal
 	// result based on hash of peerID with opponent blockID
-	b1Hash := sha256.Sum256([]byte(b1Luck.GetID() + strconv.FormatInt(int64(round), 10)))
-	b2Hash := sha256.Sum256([]byte(b2Luck.GetID() + strconv.FormatInt(int64(round), 10)))
+	b1Hash := sha256.Sum256([]byte(b1Luck.Hash() + strconv.FormatInt(int64(round), 10)))
+	b2Hash := sha256.Sum256([]byte(b2Luck.Hash() + strconv.FormatInt(int64(round), 10)))
 	b1Score := int(b1Luck.GetScore())
 	b2Score := int(b2Luck.GetScore())
 	for i := 0; i < 32; i++ {
