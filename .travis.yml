@@ -1,3 +1,11 @@
 language: go
 go:
 - "1.11"
+
+before_install:
+- go get -u github.com/whyrusleeping/gx
+- go get -u github.com/whyrusleeping/gx-go
+
+install:
+- gx-go get github.com/ipfs/go-ipfs
+- go get -t ./...
