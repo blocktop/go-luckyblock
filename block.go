@@ -59,7 +59,7 @@ func NewBlock(parent *Block, peerID string) *Block {
 	b.blockVersion = viper.GetString("blockchain.block.version")
 
 	if parent == nil {
-		// genesis block
+		// genesis block or prototype
 		b.blockNumber = uint64(0)
 		b.parentID = ""
 	} else {
@@ -68,6 +68,10 @@ func NewBlock(parent *Block, peerID string) *Block {
 	}
 
 	return b
+}
+
+func (b *Block) ResourceType() string {
+	return "block"
 }
 
 func (b *Block) Namespace() string {
@@ -108,7 +112,7 @@ func (b *Block) BlockNumber() uint64 {
 	return b.blockNumber
 }
 
-func (b *Block) Validate() bool {
+func (b *Block) Valid() bool {
 	return true
 }
 

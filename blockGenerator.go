@@ -17,8 +17,9 @@
 package luckyblock
 
 import (
-	"errors"
 	"sync"
+
+	"github.com/blocktop/go-kernel"
 
 	"github.com/golang/glog"
 	"github.com/spf13/viper"
@@ -29,8 +30,7 @@ import (
 type BlockGenerator struct {
 	sync.Mutex
 	outstandingTxns map[string]spec.Transaction
-	peerID          string
-	logPeerID       string
+	prID            string
 	blockType       string
 	txnHandlers     map[string]spec.TransactionHandler
 	blockCommitter  *blockCommitter
@@ -38,17 +38,10 @@ type BlockGenerator struct {
 
 var _ spec.BlockGenerator = (*BlockGenerator)(nil)
 
-func NewBlockGenerator(peerID string, txnHandlers ...spec.TransactionHandler) *BlockGenerator {
+func NewBlockGenerator(txnHandlers ...spec.TransactionHandler) *BlockGenerator {
 	g := &BlockGenerator{}
 	g.blockType = viper.GetString("blockchain.block.type")
 	g.outstandingTxns = make(map[string]spec.Transaction, 0)
-	g.peerID = peerID
-
-	if peerID[:2] == "Qm" {
-		g.logPeerID = peerID[2:8]
-	} else {
-		g.logPeerID = peerID[:6]
-	}
 
 	g.txnHandlers = make(map[string]spec.TransactionHandler, len(txnHandlers))
 	for _, h := range txnHandlers {
@@ -60,19 +53,38 @@ func NewBlockGenerator(peerID string, txnHandlers ...spec.TransactionHandler) *B
 	return g
 }
 
+func (g *BlockGenerator) peerID() string {
+	if g.prID == "" {
+		g.prID = kernel.Network().PeerID()
+	}
+	return g.prID
+}
+
+func (g *BlockGenerator) logPeerID() string {
+	prID := g.peerID()
+	if prID[:2] == "Qm" {
+		return prID[2:8]
+	}
+	return prID[:6]
+}
+
 func (g *BlockGenerator) Type() string {
 	return g.blockType
 }
 
+func (g *BlockGenerator) BlockPrototype() spec.Block {
+	return NewBlock(nil, "")
+}
+
 func (g *BlockGenerator) GenerateGenesisBlock() spec.Block {
-	block := NewBlock(nil, g.peerID)
+	block := NewBlock(nil, g.peerID())
 	return block
 }
 func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block) {
 	// do the work, generate block
 	// in the case of luckyblock there is no work, blocks are evaluated by their score
 	head := branch[0].(*Block)
-	block := NewBlock(head, g.peerID)
+	block := NewBlock(head, g.peerID())
 
 	branchtxns := make([]spec.Transaction, 0)
 	for _, b := range branch {
@@ -96,10 +108,10 @@ func (g *BlockGenerator) GenerateBlock(branch []spec.Block) (newBlock spec.Block
 }
 
 func (g *BlockGenerator) ReceiveTransaction(netMsg *spec.NetworkMessage) (spec.Transaction, error) {
-	txnType := netMsg.Protocol.GetResourceType()
+	txnType := netMsg.Protocol.ResourceType()
 	h := g.txnHandlers[txnType]
 	if h == nil {
-		glog.Warningf("Peer %s: %s received transaction of unknown type: %s", g.logPeerID, g.blockType, txnType)
+		glog.Warningf("Peer %s: %s received transaction of unknown type: %s", g.logPeerID(), g.blockType, txnType)
 		return nil, nil
 	}
 	txn, err := h.ReceiveTransaction(netMsg)
@@ -119,20 +131,6 @@ func (g *BlockGenerator) TryCommitBlock(newBlock spec.Block, branch []spec.Block
 
 func (g *BlockGenerator) CommitBlock(block spec.Block) {
 	//go g.blockCommitter.Commit(block)
-}
-
-func (g *BlockGenerator) ReceiveBlock(netMsg *spec.NetworkMessage) (spec.Block, error) {
-	block := &Block{}
-	err := block.Unmarshal(netMsg.Data, netMsg.Links)
-	if err != nil {
-		return nil, err
-	}
-
-	if block.Hash() != netMsg.Hash {
-		return nil, errors.New("block data does not match message hash")
-	}
-
-	return block, nil
 }
 
 func (g *BlockGenerator) executeTransactions(txns []spec.Transaction) bool {
