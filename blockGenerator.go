@@ -111,7 +111,7 @@ func (g *BlockGenerator) ReceiveTransaction(netMsg *spec.NetworkMessage) (spec.T
 	txnType := netMsg.Protocol.ResourceType()
 	h := g.txnHandlers[txnType]
 	if h == nil {
-		glog.Warningf("Peer %s: %s received transaction of unknown type: %s", g.logPeerID(), g.blockType, txnType)
+		glog.Warningf("%s received transaction of unknown type: %s", g.blockType, txnType)
 		return nil, nil
 	}
 	txn, err := h.ReceiveTransaction(netMsg)
